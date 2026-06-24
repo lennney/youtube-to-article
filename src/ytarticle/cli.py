@@ -1,4 +1,6 @@
-"""CLI — AI agent entry point for youtube-to-article pipeline."""
+"""CLI — AI agent entry point for youtube-to-article pipeline.
+Supports --config for full customization. All defaults work without a config file.
+"""
 from __future__ import annotations
 import json
 import logging
@@ -8,7 +10,7 @@ from typing import Optional
 
 import click
 
-from ytarticle.core.schema import ContentItem, make_item
+from ytarticle.core.schema import make_item
 from ytarticle.core.pipeline import Pipeline
 
 
@@ -33,12 +35,29 @@ def cli(ctx, verbose: bool):
 @click.option("--template", default="diyhub", help="HTML template name")
 @click.option("--site-name", default="MakeDIYHub", help="Site name for SEO")
 @click.option("--site-url", default="https://makediyhub.com", help="Site URL")
+@click.option("--config", "config_path", default="configs/default.yaml",
+              help="Pipeline config YAML path (default: configs/default.yaml)")
 @click.option("--json", "json_output", is_flag=True, help="Output JSON result to stdout")
 @click.pass_context
 def run(ctx, url: str, cookies: Optional[str], proxy: Optional[str],
         output_dir: str, template: str, site_name: str, site_url: str,
-        json_output: bool):
-    """Run full pipeline on a single YouTube URL."""
+        config_path: str, json_output: bool):
+    """Run full pipeline on a single YouTube URL.
+
+    Examples:
+
+    \b
+      # Quick run (uses configs/default.yaml)
+      ytarticle run --url "https://youtube.com/watch?v=xxx"
+    
+    \b
+      # With custom config
+      ytarticle run --url "..." --config myconfig.yaml
+    
+    \b
+      # All overrides merged into config
+      ytarticle run --url "..." --cookies cookies.txt --template default
+    """
     logger = ctx.obj["logger"]
 
     video_id = _extract_video_id(url)
@@ -46,27 +65,15 @@ def run(ctx, url: str, cookies: Optional[str], proxy: Optional[str],
         click.echo("Error: Could not extract video ID from URL", err=True)
         sys.exit(1)
 
-    config = {
-        "steps": [
-            {"component": "youtube_extract",
-             "id": "extract",
-             "config": {"output_dir": f"{output_dir}/raw", "cookies_path": cookies or "",
-                        "proxy_http": proxy or ""}},
-            {"component": "ai_rewrite", "id": "rewrite"},
-            {"component": "youtube_frames",
-             "id": "frames",
-             "config": {"output_dir": f"{output_dir}/images", "cookies_path": cookies or "",
-                        "proxy_http": proxy or ""}},
-            {"component": "seo_metadata", "id": "seo",
-             "config": {"site_name": site_name}},
-            {"component": "html_render", "id": "render",
-             "config": {"output_dir": f"{output_dir}/html",
-                        "template": f"{template}/article.html",
-                        "site_url": site_url, "site_name": site_name,
-                        "template_dirs": ["templates"]}},
-            {"component": "content_check", "id": "check"},
-        ]
-    }
+    # Build base config from file (or default)
+    config = _build_config(config_path, {
+        "output_dir": output_dir,
+        "cookies": cookies or "",
+        "proxy": proxy or "",
+        "template": template,
+        "site_name": site_name,
+        "site_url": site_url,
+    })
 
     item = make_item("youtube", video_id, source_url=url, keyword=site_name)
 
@@ -91,6 +98,70 @@ def run(ctx, url: str, cookies: Optional[str], proxy: Optional[str],
             "difficulty": result.difficulty,
             "images": len(result.images),
         }, indent=2))
+
+
+def _build_config(config_path: str, overrides: dict) -> dict:
+    """Load config from YAML and merge CLI overrides.
+
+    The config file defines pipeline steps. CLI overrides are merged into
+    each step's config (e.g., cookies, proxy, output_dir).
+    """
+    import yaml
+
+    # Load from file or use default inline config
+    p = Path(config_path)
+    if p.exists():
+        config = yaml.safe_load(p.read_text(encoding="utf-8"))
+    else:
+        # Inline default (backward compatible when config file not found)
+        config = {"steps": [
+            {"component": "youtube_extract", "id": "extract",
+             "config": {"output_dir": f"{overrides['output_dir']}/raw"}},
+            {"component": "ai_rewrite", "id": "rewrite",
+             "config": {"prompt_file": "prompts/rewrite_article.md"}},
+            {"component": "youtube_frames", "id": "frames",
+             "config": {"output_dir": f"{overrides['output_dir']}/images"}},
+            {"component": "seo_metadata", "id": "seo",
+             "config": {"prompt_file": "prompts/seo_metadata.md",
+                       "site_name": overrides["site_name"]}},
+            {"component": "html_render", "id": "render",
+             "config": {"output_dir": f"{overrides['output_dir']}/html",
+                       "template": f"{overrides['template']}/article.html",
+                       "site_url": overrides["site_url"],
+                       "site_name": overrides["site_name"]}},
+            {"component": "content_check", "id": "check", "config": {}},
+        ]}
+
+    # Merge CLI overrides into step configs
+    cookies = overrides.get("cookies", "")
+    proxy = overrides.get("proxy", "")
+
+    for step in config.get("steps", []):
+        scfg = step.setdefault("config", {})
+        step_id = step.get("id", "")
+        out = overrides["output_dir"]
+
+        if step_id == "extract":
+            scfg.setdefault("output_dir", f"{out}/raw")
+            if cookies:
+                scfg["cookies_path"] = cookies
+            if proxy:
+                scfg["proxy_http"] = proxy
+        elif step_id == "frames":
+            scfg.setdefault("output_dir", f"{out}/images")
+            if cookies:
+                scfg["cookies_path"] = cookies
+            if proxy:
+                scfg["proxy_http"] = proxy
+        elif step_id == "seo":
+            scfg.setdefault("site_name", overrides["site_name"])
+        elif step_id == "render":
+            scfg.setdefault("output_dir", f"{out}/html")
+            scfg.setdefault("template", f"{overrides['template']}/article.html")
+            scfg.setdefault("site_url", overrides["site_url"])
+            scfg.setdefault("site_name", overrides["site_name"])
+
+    return config
 
 
 def _extract_video_id(url: str) -> Optional[str]:

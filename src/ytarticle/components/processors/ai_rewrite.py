@@ -1,7 +1,9 @@
 """AI rewrite — transforms raw transcript into structured article."""
 from __future__ import annotations
 import logging
+import os
 import re
+from pathlib import Path
 from typing import Any
 
 from ytarticle.core.base import BaseComponent
@@ -10,6 +12,7 @@ from ytarticle.support.llm import call_llm
 
 logger = logging.getLogger("ytarticle.ai_rewrite")
 
+# Built-in default prompt (used when prompt_file is not configured)
 REWRITE_PROMPT = """You are a DIY article writer. Transform the YouTube transcript into a 
 step-by-step tutorial article.
 
@@ -37,6 +40,17 @@ materials: item1, item2, item3
 """
 
 
+def _load_prompt(config: dict[str, Any], default: str) -> str:
+    """Load prompt from external file if configured, else return default."""
+    prompt_file = config.get("prompt_file", "")
+    if prompt_file:
+        p = Path(prompt_file)
+        if p.exists():
+            return p.read_text(encoding="utf-8")
+        logger.warning(f"[ai_rewrite] prompt_file not found: {prompt_file}, using default")
+    return default
+
+
 class AIRewrite(BaseComponent):
     name = "ai_rewrite"
     version = "1.0.0"
@@ -44,7 +58,7 @@ class AIRewrite(BaseComponent):
     output_fields = ["article_md", "difficulty", "estimated_time", "estimated_cost", "materials"]
 
     def run(self, item: ContentItem, config: dict[str, Any]) -> ContentItem:
-        system_prompt = config.get("prompt", REWRITE_PROMPT)
+        system_prompt = _load_prompt(config, REWRITE_PROMPT)
         user_prompt = f"Title: {item.title}\n\nTranscript:\n{item.raw_text}"
 
         logger.info(f"[ai_rewrite] Generating article...")

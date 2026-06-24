@@ -1,0 +1,51 @@
+# ============================================================
+# Default pipeline configuration for youtube-to-article
+# Copy this file, customize, and pass to: ytarticle run --config myconfig.yaml
+# ============================================================
+
+# LLM configuration (can also be set via .env or environment variables)
+# llm:
+#   api_key: sk-xxx
+#   base_url: https://api.deepseek.com
+#   model: deepseek-chat
+#   max_tokens: 8192
+#   temperature: 0.8
+
+# Pipeline steps — ordered list of components to run
+steps:
+  - component: youtube_extract
+    id: extract
+    config:
+      output_dir: output/raw
+      cookies_path: ""    # set via --cookies or COOKIES_PATH env
+      proxy_http: ""      # set via --proxy or HTTP_PROXY env
+
+  - component: ai_rewrite
+    id: rewrite
+    config:
+      prompt_file: prompts/rewrite_article.md  # prompt template path
+
+  - component: youtube_frames
+    id: frames
+    config:
+      output_dir: output/images
+      cookies_path: ""
+      proxy_http: ""
+
+  - component: seo_metadata
+    id: seo
+    config:
+      prompt_file: prompts/seo_metadata.md
+      site_name: MakeDIYHub     # or pass via --site-name
+
+  - component: html_render
+    id: render
+    config:
+      template: diyhub/article.html
+      output_dir: output/html
+      site_url: https://makediyhub.com
+      site_name: MakeDIYHub
+
+  - component: content_check
+    id: check
+    config: {}

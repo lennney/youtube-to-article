@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from pathlib import Path
 from typing import Any
 
 from ytarticle.core.base import BaseComponent
@@ -11,6 +12,7 @@ from ytarticle.support.llm import call_llm
 
 logger = logging.getLogger("ytarticle.seo_metadata")
 
+# Built-in default prompt (used when prompt_file is not configured)
 SEO_PROMPT = """You are an SEO specialist. Given the article, generate metadata in valid JSON:
 {
     "title_tag": "Title | SiteName (max 65 chars)",
@@ -19,6 +21,17 @@ SEO_PROMPT = """You are an SEO specialist. Given the article, generate metadata 
     "h1": "Main heading"
 }
 Output ONLY the JSON object."""
+
+
+def _load_prompt(config: dict[str, Any], default: str) -> str:
+    """Load prompt from external file if configured."""
+    prompt_file = config.get("prompt_file", "")
+    if prompt_file:
+        p = Path(prompt_file)
+        if p.exists():
+            return p.read_text(encoding="utf-8")
+        logger.warning(f"[seo_metadata] prompt_file not found: {prompt_file}, using default")
+    return default
 
 
 class SeoMetadata(BaseComponent):
@@ -30,7 +43,7 @@ class SeoMetadata(BaseComponent):
     def run(self, item: ContentItem, config: dict[str, Any]) -> ContentItem:
         article_excerpt = item.article_md[:3000]
         site_name = config.get("site_name", "MakeDIYHub")
-        prompt = config.get("prompt", SEO_PROMPT)
+        prompt = _load_prompt(config, SEO_PROMPT)
 
         user_prompt = f"Site: {site_name}\n\nArticle excerpt:\n{article_excerpt}"
         logger.info(f"[seo_metadata] Generating SEO metadata...")
