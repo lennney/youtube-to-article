@@ -1,6 +1,8 @@
-"""Content quality checker."""
+"""Content quality checker — validates HTML and SEO metadata."""
 from __future__ import annotations
 import logging
+import re
+from pathlib import Path
 from typing import Any
 
 from ytarticle.core.base import BaseComponent
@@ -11,43 +13,89 @@ logger = logging.getLogger("ytarticle.content_check")
 
 class ContentCheck(BaseComponent):
     name = "content_check"
-    version = "1.0.0"
+    version = "2.0.0"
     required_fields = ["article_md", "seo"]
     output_fields: list[str] = []
 
-    CHECK_TITLE_MIN = 10
-    CHECK_TITLE_MAX = 120
-    CHECK_DESC_MAX = 160
-    CHECK_BODY_MIN_WORDS = 100
-
     def run(self, item: ContentItem, config: dict[str, Any]) -> ContentItem:
-        warnings = []
-
-        word_count = len(item.article_md.split())
-        if word_count < self.CHECK_BODY_MIN_WORDS:
-            warnings.append(f"Article too short: {word_count} words (min {self.CHECK_BODY_MIN_WORDS})")
-
-        title = item.seo.title_tag or item.title
-        if len(title) < self.CHECK_TITLE_MIN:
-            warnings.append(f"Title too short: {len(title)} chars")
-        if len(title) > self.CHECK_TITLE_MAX:
-            warnings.append(f"Title too long: {len(title)} chars (max {self.CHECK_TITLE_MAX})")
-
-        if item.seo.meta_description:
-            if len(item.seo.meta_description) > self.CHECK_DESC_MAX:
-                warnings.append(f"Description too long: {len(item.seo.meta_description)} chars")
-
-        if item.difficulty not in ("easy", "medium", "hard"):
-            warnings.append(f"Unknown difficulty: {item.difficulty}")
+        warnings = self._check_seo(item) + self._check_html(item)
 
         if warnings:
+            logger.warning(f"[content_check] {len(warnings)} warnings:")
             for w in warnings:
-                logger.warning(f"[content_check] {w}")
+                logger.warning(f"  ⚠ {w}")
         else:
             logger.info("[content_check] All checks passed")
 
         item.source_metadata["check_warnings"] = warnings
         return item
+
+    def _check_seo(self, item: ContentItem) -> list[str]:
+        warnings = []
+        tag = item.seo.title_tag or ""
+        if len(tag) > 65:
+            warnings.append(f"title_tag too long: {len(tag)} chars (max 65)")
+        elif not tag:
+            warnings.append("title_tag is empty")
+
+        desc = item.seo.meta_description or ""
+        if len(desc) > 155:
+            warnings.append(f"meta_description too long: {len(desc)} chars (max 155)")
+        elif not desc:
+            warnings.append("meta_description is empty")
+
+        slug = item.seo.url_slug or ""
+        if not slug:
+            warnings.append("url_slug is empty")
+
+        h1 = item.seo.h1 or item.title
+        if not h1:
+            warnings.append("h1 is empty")
+
+        word_count = len(item.article_md.split())
+        if word_count < 100:
+            warnings.append(f"Article too short: {word_count} words (min 100)")
+
+        if item.difficulty not in ("easy", "medium", "hard", "Easy", "Medium", "Hard"):
+            if item.difficulty:
+                warnings.append(f"Unknown difficulty: {item.difficulty}")
+
+        return warnings
+
+    def _check_html(self, item: ContentItem) -> list[str]:
+        warnings = []
+        html_path = item.artifacts.html_path
+        if not html_path:
+            return warnings
+
+        path = Path(html_path)
+        if not path.exists():
+            warnings.append("HTML file not found")
+            return warnings
+
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            return ["File is not valid UTF-8"]
+
+        if "" in text:
+            warnings.append("Contains Unicode replacement characters (U+FFFD)")
+
+        if "\x00" in text:
+            warnings.append("Contains null bytes")
+
+        # Check for critical schema.org markup
+        for schema_type in ["HowTo", "BreadcrumbList"]:
+            if schema_type not in text:
+                warnings.append(f"Missing {schema_type} schema.org markup")
+
+        # Check for step images
+        imgs = re.findall(r'<img[^>]+src="([^"]+)"', text)
+        step_imgs = [i for i in imgs if "step_" in i]
+        if not step_imgs and not any("maxresdefault" in i or "hqdefault" in i for i in imgs):
+            warnings.append("No step images found in HTML")
+
+        return warnings
 
 
 def create():

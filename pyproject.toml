@@ -1,7 +1,7 @@
 [project]
 name = "youtube-to-article"
-version = "0.1.0"
-description = "YouTube video → DIY article pipeline. yt-dlp + AI rewrite + SEO + HTML."
+version = "0.2.0"
+description = "YouTube video → structured DIY article — yt-dlp + deno n-challenge + LLM rewrite + frame extraction + WebP + SEO + Schema.org HTML. Full pipeline for AI agents."
 authors = [{ name = "lennney" }]
 requires-python = ">=3.12"
 dependencies = [

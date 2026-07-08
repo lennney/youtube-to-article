@@ -1,4 +1,4 @@
-"""YouTube keyframe extraction via yt-dlp + ffmpeg."""
+"""YouTube keyframe extraction via yt-dlp + ffmpeg with LLM step detection."""
 from __future__ import annotations
 import json
 import logging
@@ -20,9 +20,41 @@ logger = logging.getLogger("ytarticle.youtube_frames")
 
 class YouTubeFrames(BaseComponent):
     name = "youtube_frames"
-    version = "1.0.0"
+    version = "2.0.0"
     required_fields = ["source_id", "article_md"]
     output_fields = ["images"]
+
+    DETECT_STEPS_PROMPT = """You are a video analysis assistant. Given a DIY tutorial article and a timestamped transcript from the source video, match each article step to the closest transcript timestamp.
+
+Return ONLY a JSON array matching each step to a timestamp:
+[{"step": 1, "label": "Step description", "timestamp": "00:01:30"}]
+
+Rules:
+- Map each article step to the transcript segment where that action is first described
+- Timestamp format: HH:MM:SS
+- If you cannot confidently match a step, use the transcript segment closest in topic
+- Skip steps that have no clear transcript match"""
+
+    @staticmethod
+    def _find_deno() -> str:
+        import os
+        deno = os.environ.get("DENO_PATH", "")
+        if deno and Path(deno).exists():
+            return deno
+        deno = shutil.which("deno")
+        if deno:
+            return deno
+        fallback = os.path.expanduser("~/.deno/bin/deno")
+        if Path(fallback).exists():
+            return fallback
+        return ""
+
+    @staticmethod
+    def _js_flags() -> list[str]:
+        deno = YouTubeFrames._find_deno()
+        if deno:
+            return ["--js-runtimes", f"deno:{deno}", "--remote-components", "ejs:github"]
+        return []
 
     def run(self, item: ContentItem, config: dict[str, Any]) -> ContentItem:
         if item.source.value != "youtube" or not item.source_id:
@@ -39,19 +71,29 @@ class YouTubeFrames(BaseComponent):
         cookies = CookieManager(config.get("cookies_path"))
         proxy = ProxyManager(http=config.get("proxy_http"))
 
+        # Step 1: Detect timestamps via LLM
         timestamps = self._detect_timestamps(item.article_md, item.artifacts.timed_transcript)
+
+        # Step 2: Download video (480p)
         video_path = self._download_video(video_id, output_dir, cookies, proxy)
 
-        if not video_path:
-            return item
-
-        if timestamps:
+        # Step 3: Extract frames
+        if video_path and timestamps:
             frames = self._extract_frames(video_path, timestamps, output_dir)
+        elif video_path:
+            step_count = len(re.findall(r"^### Step \d", item.article_md, re.MULTILINE))
+            if step_count == 0:
+                step_count = len(re.findall(r"^## Step \d", item.article_md, re.MULTILINE))
+            if step_count == 0:
+                step_count = 8
+            logger.info(f"[youtube_frames] Using fallback: {step_count} intervals")
+            frames = self._fallback_frames(video_path, step_count, output_dir)
         else:
-            fallback_count = len(re.findall(r"^## Step \d", item.article_md, re.MULTILINE)) or 8
-            frames = self._fallback_frames(video_path, fallback_count, output_dir)
+            frames = []
 
-        video_path.unlink(missing_ok=True)
+        # Clean up video
+        if video_path and video_path.exists():
+            video_path.unlink(missing_ok=True)
 
         for f in frames:
             item.images.append(ImageInfo(
@@ -65,8 +107,10 @@ class YouTubeFrames(BaseComponent):
 
     def _detect_timestamps(self, article_md: str, timed_path: str) -> list[dict]:
         if not timed_path or not Path(timed_path).exists():
+            logger.info("[youtube_frames] No timed transcript — skipping stamp detection")
             return []
 
+        # Extract steps section
         steps_section = ""
         in_steps = False
         for line in article_md.split("\n"):
@@ -81,24 +125,25 @@ class YouTubeFrames(BaseComponent):
 
         try:
             timed_data = json.loads(Path(timed_path).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning(f"[youtube_frames] Failed to load timed transcript: {e}")
             return []
 
-        timed_sample = timed_data[::3][:80]
-        system_prompt = (
-            "You are a video timestamp detector. Given article steps and transcript "
-            "segments with timestamps, output a JSON array of objects with 'step' (int), "
-            "'timestamp' (HH:MM:SS), and 'label' (str) fields. "
-            "Match each article step to the most relevant transcript timestamp. "
-            "Output ONLY the JSON array."
-        )
-        user_prompt = f"Article steps:\n{steps_section.strip()}\n\nTranscript segments:\n{json.dumps(timed_sample, ensure_ascii=False)}"
+        timed_sample = timed_data[::3][:80]  # every 3rd, max 80
 
+        user_prompt = (
+            f"Article steps:\n{steps_section.strip()}\n\n"
+            f"Transcript segments:\n{json.dumps(timed_sample, ensure_ascii=False)}"
+        )
+
+        logger.info("[youtube_frames] Detecting step timestamps via LLM...")
         try:
-            result = call_llm(system_prompt, user_prompt, max_tokens=2048, temperature=0.3)
+            result = call_llm(self.DETECT_STEPS_PROMPT, user_prompt, max_tokens=2048, temperature=0.3)
             json_match = re.search(r"\[.*\]", result, re.DOTALL)
             if json_match:
-                return json.loads(json_match.group())
+                stamps = json.loads(json_match.group())
+                logger.info(f"[youtube_frames] Detected {len(stamps)} step timestamps")
+                return stamps
         except Exception as e:
             logger.warning(f"[youtube_frames] Timestamp detection failed: {e}")
         return []
@@ -107,12 +152,15 @@ class YouTubeFrames(BaseComponent):
                         cookies: CookieManager, proxy: ProxyManager) -> Path | None:
         video_path = output_dir / f"{video_id}.mp4"
         if video_path.exists():
+            logger.info(f"[youtube_frames] Video already downloaded: {video_id}")
             return video_path
 
+        logger.info(f"[youtube_frames] Downloading video {video_id} (480p)...")
         cmd = [sys.executable, "-m", "yt_dlp",
                "-f", "bestvideo[height<=480]",
                *cookies.yt_dlp_args(),
                *proxy.yt_dlp_args(),
+               *self._js_flags(),
                "--impersonate", "chrome",
                "-o", str(video_path),
                f"https://www.youtube.com/watch?v={video_id}"]
@@ -127,7 +175,7 @@ class YouTubeFrames(BaseComponent):
             return None
 
         if result.returncode != 0 or not video_path.exists():
-            logger.warning(f"[youtube_frames] Download failed: {result.stderr[:200]}")
+            logger.warning(f"[youtube_frames] Download failed: {result.stderr[-200:]}")
             return None
         return video_path
 
@@ -154,6 +202,7 @@ class YouTubeFrames(BaseComponent):
                 frames.append({"path": str(frame_path),
                               "alt": item.get("label", f"Step {step}"),
                               "step": step})
+                logger.info(f"[youtube_frames] Extracted: {frame_path.name}")
         return frames
 
     def _fallback_frames(self, video_path: Path, num_steps: int,
