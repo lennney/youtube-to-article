@@ -39,11 +39,12 @@ class HtmlRender(BaseComponent):
             path = getattr(img, 'path', '') or img.get('path', '')
             if step and path:
                 rel = path.replace("\\", "/")
-                for sep in ("/output/images/", "/images/"):
+                # Normalize: strip any prefix up to and including "images/"
+                for sep in ("/output/images/", "output/images/", "/images/"):
                     if sep in rel:
                         rel = rel.split(sep, 1)[1]
-                        rel = f"../images/{rel}"
                         break
+                rel = f"../images/{rel}"
                 step_imgs[step] = rel
         return step_imgs
 
@@ -76,7 +77,7 @@ class HtmlRender(BaseComponent):
                 body_html = md_lib.markdown("\n".join(current_lines).strip())
                 if "step" in current.lower() or "step-by-step" in current.lower():
                     body_html = self._inject_step_images(body_html, images)
-                sections.append({"heading": current, "body": body_html, "anchor": self._slugify(current)})
+                sections.append({"id": self._slugify(current), "title": current, "body_html": body_html, "image": ""})
                 current_lines = []
                 current = None
 
@@ -93,20 +94,20 @@ class HtmlRender(BaseComponent):
                     if not stripped:
                         continue
                     if line.startswith("### "):
-                        faq.append({"question": line[4:].strip(), "answer": ""})
+                        faq.append({"q": line[4:].strip(), "a": ""})
                         continue
                     q_match = re.match(r'\*\*Q:\s*(.+?)(?:\*\*)?(?:\s+A:\s*(.*))?$', stripped)
                     if q_match:
                         question = q_match.group(1).strip()
                         answer = q_match.group(2)
-                        faq.append({"question": question, "answer": ((answer or "").strip() + " ") if answer else ""})
+                        faq.append({"q": question, "a": ((answer or "").strip() + " ") if answer else ""})
                         continue
                     a_match = re.match(r'A:\s*(.*)', stripped)
                     if a_match and faq:
-                        faq[-1]["answer"] += a_match.group(1).strip() + " "
+                        faq[-1]["a"] += a_match.group(1).strip() + " "
                         continue
                     if faq:
-                        faq[-1]["answer"] += stripped + " "
+                        faq[-1]["a"] += stripped + " "
                     continue
             if line.startswith("## "):
                 flush()
@@ -118,7 +119,7 @@ class HtmlRender(BaseComponent):
                 current_lines.append(line)
         flush()
         for item in faq:
-            item["answer"] = item["answer"].strip()
+            item["a"] = item["a"].strip()
         return sections, faq
 
     @staticmethod
@@ -210,7 +211,7 @@ class HtmlRender(BaseComponent):
         custom_dirs = config.get("template_dirs", [])
         site_url = config.get("site_url", "https://makediyhub.com")
         site_name = config.get("site_name", "MakeDIYHub")
-        date_published = item.started_at or datetime.now().strftime("%Y-%m-%d")
+        date_published = (item.started_at or datetime.now().isoformat())[:10]
 
         template_dir, resolved_name = resolve_template(template_name, custom_dirs=custom_dirs)
         env = self._get_env(template_dir)
@@ -282,15 +283,15 @@ class HtmlRender(BaseComponent):
         # Schema.org: FAQPage
         faq_schema_json = None
         if faq:
-            faq_entities = [{"@type": "Question", "name": f["question"],
-                            "acceptedAnswer": {"@type": "Answer", "text": f["answer"]}} for f in faq if f.get("question") and f.get("answer")]
+            faq_entities = [{"@type": "Question", "name": f["q"],
+                            "acceptedAnswer": {"@type": "Answer", "text": f["a"]}} for f in faq if f.get("q") and f.get("a")]
             if faq_entities:
-                faq_schema_json = json.dumps({"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": faq_entities}, ensure_ascii=False)
+                faq_schema_json = json.dumps({"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": faq_entities}, ensure_ascii=False, indent=2)
 
         # TOC
         toc_items = [{"cls": "toc-h2", "id": "intro", "label": "Overview"}]
         for s in sections:
-            toc_items.append({"cls": "toc-h2", "id": s["anchor"], "label": s["heading"]})
+            toc_items.append({"cls": "toc-h2", "id": s["id"], "label": s["title"]})
         if faq:
             toc_items.append({"cls": "toc-h2", "id": "faq", "label": "FAQ"})
 
@@ -325,9 +326,9 @@ class HtmlRender(BaseComponent):
             toc_items=toc_items,
             sections=sections,
             faq=faq,
-            howto_schema_json=json.dumps(howto_schema, ensure_ascii=False),
-            article_schema_json=json.dumps(article_schema, ensure_ascii=False),
-            breadcrumb_schema_json=json.dumps(breadcrumb_schema, ensure_ascii=False),
+            howto_schema_json=json.dumps(howto_schema, ensure_ascii=False, indent=2),
+            article_schema_json=json.dumps(article_schema, ensure_ascii=False, indent=2),
+            breadcrumb_schema_json=json.dumps(breadcrumb_schema, ensure_ascii=False, indent=2),
             faq_schema_json=faq_schema_json,
             SITE_URL=site_url,
             url_slug=url_slug,

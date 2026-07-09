@@ -60,6 +60,9 @@ class SeoMetadata(BaseComponent):
 
         item.seo.title_tag = self._truncate_title(seo_data.get("title_tag", item.title), site_name)
         item.seo.meta_description = seo_data.get("meta_description", "")[:155]
+        # Fallback: generate description from article content if LLM returned empty
+        if not item.seo.meta_description.strip():
+            item.seo.meta_description = item.article_md[:200].replace("\n", " ").replace("#", "").strip()[:155]
         item.seo.url_slug = seo_data.get("url_slug", f"/diy/{item.source_id}")
         item.seo.h1 = seo_data.get("h1", item.title)
         return item
@@ -67,13 +70,13 @@ class SeoMetadata(BaseComponent):
     @staticmethod
     def _truncate_title(title: str, site_name: str) -> str:
         suffix = f" | {site_name}"
-        if len(title) > 65:
-            if suffix in title:
-                space = 65 - len(suffix)
-                if space > 10:
-                    return title[:space].rstrip() + suffix
-            return title[:62].rstrip() + "..."
-        return title
+        max_len = 65
+        if len(title) + len(suffix) <= max_len:
+            return title + suffix
+        space = max_len - len(suffix)
+        if space > 10:
+            return title[:space].rstrip() + suffix
+        return title[:max_len - 3].rstrip() + "..."
 
 
 def create():

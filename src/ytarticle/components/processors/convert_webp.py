@@ -36,9 +36,7 @@ class ConvertWebP(BaseComponent):
             webp_path = p.with_suffix(".webp")
             try:
                 result = subprocess.run(
-                    ["ffmpeg", "-i", str(p),
-                     "-c:v", "libwebp", "-quality", str(quality),
-                     "-y", str(webp_path)],
+                    ["cwebp", "-q", str(quality), str(p), "-o", str(webp_path)],
                     capture_output=True, text=True, timeout=30)
             except (subprocess.TimeoutExpired, OSError) as e:
                 logger.warning(f"[convert_webp] Failed {p.name}: {e}")
