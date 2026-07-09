@@ -191,6 +191,65 @@ def export(ctx, output_dir: str, fmt: str):
   }},""")
         click.echo(f"\n// {len(entries)} entries", err=True)
 
+@cli.command()
+@click.option("--target", required=True, help="Path to diyhub-online project root")
+@click.option("--output-dir", default="output", help="Pipeline output directory")
+@click.option("--category", "cat_slug", default="tech", help="Category slug: tech/lifestyle")
+@click.option("--dry-run", is_flag=True, help="Show what would be copied, don't copy")
+@click.pass_context
+def sync(ctx, target, output_dir, cat_slug, dry_run):
+    """Sync pipeline output to diyhub-online website."""
+    import shutil as _shutil
+
+    state_dir = Path(output_dir) / "state"
+    if not state_dir.exists():
+        click.echo("No pipeline state found. Run some pipelines first.", err=True)
+        sys.exit(1)
+
+    target_p = Path(target)
+    html_dir = target_p / "content" / "blogs"
+    img_base = target_p / "public" / cat_slug
+
+    copied = 0
+    for sf in sorted(state_dir.glob("youtube_*.json")):
+        try:
+            state = json.loads(sf.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if state.get("status") != "done":
+            continue
+
+        vid = state["source_id"]
+        html_src = state.get("artifacts", {}).get("html_path", "")
+        img_dir_src = state.get("artifacts", {}).get("images_dir", f"output/images/{vid}")
+
+        # Copy HTML
+        if html_src and Path(html_src).exists():
+            dst = html_dir / Path(html_src).name
+            if not dry_run:
+                html_dir.mkdir(parents=True, exist_ok=True)
+                _shutil.copy2(html_src, dst)
+            click.echo(f"  HTML: {Path(html_src).name} -> content/blogs/")
+
+        # Copy images
+        img_dir = Path(img_dir_src)
+        if img_dir.exists():
+            dst_dir = img_base / vid
+            if not dry_run:
+                if dst_dir.exists():
+                    _shutil.rmtree(dst_dir)
+                _shutil.copytree(img_dir, dst_dir)
+            count = len(list(img_dir.glob("*.webp"))) + len(list(img_dir.glob("*.jpg")))
+            click.echo(f"  IMG:  {count} files -> public/{cat_slug}/{vid}/")
+
+        copied += 1
+
+    if dry_run:
+        click.echo(f"\n[DRY RUN] Would sync {copied} articles to {target}")
+    else:
+        click.echo(f"\nSynced {copied} articles to {target}")
+        click.echo("Run 'ytarticle export' to get blogs.ts entries for registration.")
+
 
 @cli.command()
 def templates():

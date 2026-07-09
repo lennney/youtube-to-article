@@ -78,8 +78,19 @@ Rules:
         video_path = self._download_video(video_id, output_dir, cookies, proxy)
 
         # Step 3: Extract frames
+        MIN_FRAMES = 5
         if video_path and timestamps:
             frames = self._extract_frames(video_path, timestamps, output_dir)
+            # Fallback fill: if LLM detected too few frames, supplement
+            if len(frames) < MIN_FRAMES and video_path.exists():
+                need = MIN_FRAMES - len(frames)
+                used_steps = {f["step"] for f in frames}
+                extra_frames = self._fallback_frames(video_path, need + len(frames), output_dir)
+                extra_frames = [f for f in extra_frames if f["step"] not in used_steps][:need]
+                frames += extra_frames
+                logger.info(f"[youtube_frames] Supplemented {len(extra_frames)} fallback frames (total: {len(frames)})")
+            elif len(frames) < MIN_FRAMES:
+                logger.info(f"[youtube_frames] Only {len(frames)} frames extracted (video gone, can't supplement)")
         elif video_path:
             step_count = len(re.findall(r"^### Step \d", item.article_md, re.MULTILINE))
             if step_count == 0:
