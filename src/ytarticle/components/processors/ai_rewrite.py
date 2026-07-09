@@ -76,6 +76,16 @@ class AIRewrite(BaseComponent):
                              for m in materials_raw.split("\n") if m.strip()]
 
         item.article_md = self._strip_metadata(article)
+
+        # Save markdown to disk
+        output_dir = Path(config.get("output_dir", "output/articles"))
+        output_dir.mkdir(parents=True, exist_ok=True)
+        slug = re.sub(r"[^a-z0-9]+", "-", item.title.lower()).strip("-")[:60]
+        md_path = output_dir / f"{item.source_id}-{slug}.md"
+        md_path.write_text(item.article_md, encoding="utf-8")
+        item.artifacts.article_md = str(md_path)
+        logger.info(f"[ai_rewrite] Saved article to {md_path}")
+
         return item
 
     @staticmethod

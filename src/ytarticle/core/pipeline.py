@@ -1,6 +1,7 @@
 """Pipeline engine — config-driven step orchestrator."""
 from __future__ import annotations
 import logging
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -73,13 +74,59 @@ class Pipeline:
 
             if not success:
                 item.mark_failed(f"{comp_name}: {last_error}")
+                self._save_state(item)
                 return item
 
             logger.info(f"[pipeline] {comp_name} done")
 
         item.mark_done()
+        self._save_state(item)
         logger.info(f"[pipeline] Done: {task_id}")
         return item
+
+    def _save_state(self, item: ContentItem) -> None:
+        """Save pipeline state JSON for export command."""
+        output_dir = self.config.get("steps", [{}])[0].get("config", {}).get("output_dir", "output")
+        state_dir = Path(output_dir).parent / "state" if "/" in output_dir else Path("output") / "state"
+        # ponytail: resolve state dir from first step's output_dir
+        for step in self.config.get("steps", []):
+            cfg = step.get("config", {})
+            if "output_dir" in cfg:
+                state_dir = Path(cfg["output_dir"]).parent / "state"
+                break
+        state_dir.mkdir(parents=True, exist_ok=True)
+
+        state = {
+            "title": item.title,
+            "source": item.source.value,
+            "source_id": item.source_id,
+            "source_url": item.source_url,
+            "status": item.status,
+            "category": item.category,
+            "keyword": item.keyword,
+            "difficulty": item.difficulty,
+            "estimated_time": item.estimated_time,
+            "estimated_cost": item.estimated_cost,
+            "materials": item.materials,
+            "started_at": item.started_at,
+            "completed_at": item.completed_at,
+            "seo": {
+                "title_tag": item.seo.title_tag,
+                "meta_description": item.seo.meta_description,
+                "url_slug": item.seo.url_slug,
+                "h1": item.seo.h1,
+            },
+            "artifacts": {
+                "html_path": item.artifacts.html_path,
+                "article_md": item.artifacts.article_md,
+                "images_dir": item.artifacts.images_dir,
+                "cover_img": item.artifacts.cover_img,
+            },
+            "tags": item.tags,
+            "error": item.error,
+        }
+        state_file = state_dir / f"{item.task_id()}.json"
+        state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def run_from_config(config_path: str, item: ContentItem) -> ContentItem:
