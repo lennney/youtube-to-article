@@ -58,7 +58,11 @@ class SeoMetadata(BaseComponent):
         else:
             seo_data = {}
 
-        item.seo.title_tag = self._truncate_title(seo_data.get("title_tag", item.title), site_name)
+        raw_title = seo_data.get("title_tag", item.title)
+        # Fix unclosed brackets: " [Tested" → " [Tested]"
+        if raw_title.count("[") > raw_title.count("]"):
+            raw_title += "]"
+        item.seo.title_tag = self._truncate_title(raw_title, site_name)
         item.seo.meta_description = seo_data.get("meta_description", "")[:155]
         # Fallback: generate description from article content if LLM returned empty
         if not item.seo.meta_description.strip():
@@ -70,12 +74,18 @@ class SeoMetadata(BaseComponent):
     @staticmethod
     def _truncate_title(title: str, site_name: str) -> str:
         suffix = f" | {site_name}"
-        max_len = 65
+        max_len = 70
         if len(title) + len(suffix) <= max_len:
             return title + suffix
         space = max_len - len(suffix)
         if space > 10:
-            return title[:space].rstrip() + suffix
+            trimmed = title[:space].rstrip()
+            # Don't leave an unclosed bracket tag
+            if trimmed.count("[") > trimmed.count("]"):
+                bracket_pos = trimmed.rfind("[")
+                if bracket_pos > 0:
+                    trimmed = trimmed[:bracket_pos].rstrip()
+            return trimmed + suffix
         return title[:max_len - 3].rstrip() + "..."
 
 
