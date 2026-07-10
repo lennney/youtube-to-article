@@ -74,6 +74,14 @@ class SeoMetadata(BaseComponent):
     @staticmethod
     def _truncate_title(title: str, site_name: str) -> str:
         suffix = f" | {site_name}"
+        # Strip existing suffix if LLM already added it
+        if title.endswith(suffix):
+            title = title[:-len(suffix)]
+        elif title.endswith(f" | {site_name[:6]}"):
+            # LLM truncated the suffix partially — strip it
+            sep = title.rfind(" | ")
+            if sep > 0:
+                title = title[:sep]
         max_len = 70
         if len(title) + len(suffix) <= max_len:
             return title + suffix

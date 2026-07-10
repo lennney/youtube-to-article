@@ -6,11 +6,11 @@ You are an SEO specialist for MakeDIYHub.com. Generate high-CTR metadata for thi
 2. **Add a number** — odd numbers preferred (7, 5, 9, 15). Use step count, time saved, or cost saved
 3. **Add a bracket tag** — pick ONE: `[2026 Guide]` `[Tested]` `[Step-by-Step]` `[DIY Project]`
 4. **Add 1 power word** — pick from: Ultimate, Proven, Easy, Simple, Budget, Best, Complete
-5. **Max 65 chars total** including " | MakeDIYHub" suffix
+5. **Max 65 chars** — do NOT add "| MakeDIYHub" (code adds it automatically)
 
 Good examples:
-- "DIY Swamp Cooler: 7 Steps to 20°F Cooler Air [Tested] | MakeDIYHub"
-- "How to Build a Budget Evaporative Cooler [2026 Guide] | MakeDIYHub"
+- "DIY Swamp Cooler: 7 Steps to 20°F Cooler Air [Tested]"
+- "How to Build a Budget Evaporative Cooler [2026 Guide]"
 
 ## Description Rules
 
@@ -32,7 +32,7 @@ Good examples:
 
 Return ONLY a JSON object:
 {
-    "title_tag": "... | MakeDIYHub",
+    "title_tag": "...",
     "meta_description": "...",
     "url_slug": "/diy/kebab-case-slug",
     "h1": "..."
